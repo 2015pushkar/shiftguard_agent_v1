@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shiftguard"
+version = "0.1.0"
+description = "Fully-local AI action agent that audits hourly timecards before payroll (RAG + ReAct + deterministic tools)."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = { file = "LICENSE" }
+dependencies = [
+    "ollama>=0.4",
+    "qdrant-client>=1.12",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+shiftguard = "shiftguard.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shiftguard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: slow tests that run the full agent against a live Ollama",
+]
