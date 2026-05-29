@@ -120,16 +120,19 @@ Note the discipline in Route B: every number ($2.81, 40.25 h) comes from a Pytho
 
 ## Stack and why each piece was chosen
 
-| Choice | What | Why this one |
-|---|---|---|
-| **Runner** | Ollama | One local binary serves both the LLM and the embeddings, and constrains output to a JSON schema natively, which the ReAct loop relies on. |
-| **LLM** | `qwen2.5:7b-instruct` (dev: `:3b`) | Strong instruction-following and native function-calling at the 7B size (tracked on the Berkeley Function-Calling Leaderboard). In a multi-step loop one bad step derails the rest, so per-step reliability matters more than tokens/sec. Swappable via `OLLAMA_MODEL`. |
-| **Why not 14B** | n/a | CPU token generation re-reads every weight per token, so it is bound by memory bandwidth: a 14B moves ~2x the bytes and runs at ~half the speed. Too slow for a 5-6 step loop. |
-| **Vector store** | Qdrant **embedded** | The same Qdrant engine as the server, run in-process from a file path: real ANN search, zero ops, no Docker. |
-| **Embeddings** | `nomic-embed-text` via Ollama | Runs on the same Ollama runner (no extra ML dependencies). It is task-prefixed: queries are embedded as `search_query:` and policy chunks as `search_document:`, which is how it was trained and helps asymmetric RAG (short question vs long rule). |
-| **Chunking** | One chunk per policy rule | Split on headings so each vector is a complete, citable rule carrying `doc`/`section` metadata. Fixed-size cuts would split a rule across chunks and break citations. |
-| **Agent** | Hand-rolled ReAct | ~150 lines of explicit loop. The autonomy logic is what is being evaluated, so it stays visible rather than buried in a framework that also bloats context for a small model. |
-| **Context window** | Pinned `num_ctx=8192` | Ollama defaults to 2048 and, on overflow, silently drops the oldest tokens (the system prompt and early observations) with no error, quietly corrupting the loop. 8192 holds the whole trajectory. |
+Two constraints drove every decision: it has to run **fully locally on an ordinary CPU machine**, and the **model may only decide what to do, never do the math**. Each choice below follows from those.
+
+| Decision | Why I chose it (and not the alternative) |
+|---|---|
+| **Ollama** to run the model | The simplest way to run an LLM fully locally: one install pulls and serves the model and gives me JSON-schema-constrained output, which the agent loop depends on. Hand-running llama.cpp or standing up vLLM (GPU-first) would be more setup for no benefit here. |
+| **Qwen2.5-7B-Instruct** as the model | I need a model small enough for a CPU laptop but reliable at following instructions and returning valid tool-call JSON; at the 7B size, Qwen2.5-Instruct is among the best at exactly that. A 14B is too slow on CPU (token generation re-reads every weight, so it is memory-bandwidth-bound: ~2x the size means ~half the speed); the 3B slips over a 5-6 step loop, so I keep it only for fast dev runs. Set via `OLLAMA_MODEL`, so it stays swappable. |
+| **Qdrant, embedded** as the vector store | RAG needs a vector database. Embedded mode runs the real Qdrant engine in-process from a local folder, so I get production-grade vector search with no server and no Docker, keeping the project "clone and run." |
+| **nomic-embed-text** for embeddings | The policy docs have to become vectors locally. This model runs through the same Ollama I already have (no second ML stack to install) and is purpose-built for retrieval, embedding questions and documents in separate modes that measurably improve search quality. |
+| **One chunk per policy rule** for RAG | I split the policy docs on their headings so each stored vector is a single, self-contained rule with its section name attached. That makes retrieval precise and lets every answer cite an exact rule; fixed-size chunking would cut a rule in half and break citations. |
+| **A hand-written ReAct loop** (no LangChain) | The agent's decision-making is the thing being judged, so I keep it as ~150 lines of readable Python instead of hiding it in a framework. That also keeps the prompt small (which matters for a small local model) and avoids heavy dependencies. |
+| **Deterministic Python tools** | The task forbids the model from doing math, and LLMs are unreliable at arithmetic anyway. So every calculation lives in a plain, unit-tested function and the model only picks which to call, keeping every number correct and auditable. |
+
+One required setting worth calling out: I pin **`num_ctx=8192`**. Ollama defaults to a 2048-token window and, when you exceed it, silently discards the oldest text, which would quietly delete the system prompt mid-run; 8192 keeps the whole conversation intact.
 
 ---
 
