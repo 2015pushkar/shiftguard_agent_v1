@@ -36,15 +36,6 @@ flowchart TD
     T1 -. reads .-> QD[("embedded Qdrant<br/>+ nomic-embed-text")]
     T2 -. reads .-> JS[/"timecards.json (INPUT)"/]
     T5 -. writes .-> TK[/"tickets.jsonl (OUTPUT, review queue)"/]
-
-    classDef navy fill:#14213d,stroke:#0b1526,color:#ffffff;
-    classDef navyLite fill:#e6ebf4,stroke:#14213d,color:#14213d;
-    classDef gold fill:#ffd23f,stroke:#d4a017,color:#14213d;
-    classDef goldLite fill:#fff6d6,stroke:#d4a017,color:#14213d;
-    class A,R navy;
-    class U,OUT navyLite;
-    class T1,T2,T3,T4,T5 gold;
-    class QD,JS,TK goldLite;
 ```
 
 Everything runs locally under **Ollama** (LLM + embeddings) with **embedded Qdrant**. Tickets append to `data/tickets.jsonl`, the local manager-review queue (no external notifications, by design).
@@ -62,7 +53,6 @@ Both questions hit the **same loop, same prompt, same five tools**. Nothing abou
 > *"What is our overtime threshold?"*
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'actorBkg':'#14213d','actorBorder':'#0b1526','actorTextColor':'#ffffff','signalColor':'#14213d','signalTextColor':'#14213d','noteBkgColor':'#ffd23f','noteBorderColor':'#d4a017','noteTextColor':'#14213d','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -87,7 +77,6 @@ sequenceDiagram
 > This is the case that needs both a policy lookup and tool execution.
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'actorBkg':'#14213d','actorBorder':'#0b1526','actorTextColor':'#ffffff','signalColor':'#14213d','signalTextColor':'#14213d','noteBkgColor':'#ffd23f','noteBorderColor':'#d4a017','noteTextColor':'#14213d','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -218,13 +207,6 @@ flowchart LR
     W -->|store ticket| DB
     W -->|ticket event| NQ[["Amazon SQS<br/>notifications"]]
     NQ --> MAIL["Email · Amazon SES"]
-
-    classDef navy fill:#14213d,stroke:#0b1526,color:#ffffff;
-    classDef gold fill:#ffd23f,stroke:#d4a017,color:#14213d;
-    classDef goldLite fill:#fff6d6,stroke:#d4a017,color:#14213d;
-    class UI,API,W,LLM navy;
-    class SQS,NQ gold;
-    class DB,QD,MAIL goldLite;
 ```
 
 - **Async, not blocking.** An audit takes minutes, so the API drops the job on an **SQS queue** and returns immediately; autoscaled **agent workers** process the queue. Statuses and results are read back from **Postgres**, the durable store for tickets and audit runs. (Redis can be added later for caching and idempotency.)
