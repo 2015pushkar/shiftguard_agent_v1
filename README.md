@@ -21,31 +21,35 @@ A request enters a loop. Each turn the model thinks, then either calls **one** t
 
 ```mermaid
 flowchart TD
-    U(["Plain-English request"]) --> A["ReAct loop · agent/react.py<br/>think then act<br/><i>the LLM only plans and routes</i>"]
+    U(["Plain-English request"]) --> A["ReAct loop · agent/react.py<br/>think, then act<br/><i>the LLM only plans and routes</i>"]
     A -->|"emits JSON: action"| R{{"picks ONE of 5 tools<br/>by its description"}}
-    A -->|"emits JSON: final_answer"| OUT(["Answer + citations"])
+    A -->|"emits JSON: final_answer"| OUT(["Answer + citation"])
 
-    R --> T1["search_policy<br/>(RAG)"]
-    R --> T2["get_timecards"]
-    R --> T3["compute_hours"]
-    R --> T4["estimate_payroll_impact"]
-    R --> T5["create_review_ticket"]
+    R --> T1["1 · search_policy (RAG)"]
+    R --> T2["2 · get_timecards"]
+    R --> T3["3 · compute_hours"]
+    R --> T4["4 · estimate_payroll_impact"]
+    R --> T5["5 · create_review_ticket"]
 
     T1 & T2 & T3 & T4 & T5 -->|observation fed back| A
 
-    T1 -.-> QD[("embedded Qdrant<br/>+ nomic-embed-text")]
-    T2 -.-> JS[("timecards.json")]
-    T5 -.-> TK[("tickets.jsonl")]
+    T1 -. reads .-> QD[("embedded Qdrant<br/>+ nomic-embed-text")]
+    T2 -. reads .-> JS[/"timecards.json (INPUT)"/]
+    T5 -. writes .-> TK[/"tickets.jsonl (OUTPUT, review queue)"/]
 
     classDef tool fill:#eef6ff,stroke:#5b8def;
     classDef store fill:#f4f4f4,stroke:#999,stroke-dasharray:3 3;
+    classDef io fill:#fff7e6,stroke:#d98f00;
+    classDef answer fill:#e6f4ea,stroke:#2f9e44,stroke-width:2px;
     class T1,T2,T3,T4,T5 tool;
-    class QD,JS,TK store;
+    class QD store;
+    class JS,TK io;
+    class OUT answer;
 ```
 
-Everything runs locally under **Ollama** (the LLM and the embeddings) with **embedded Qdrant** as the vector store. Raised tickets are appended to `data/tickets.jsonl`, which acts as the local manager-review queue; there are no external notifications, by design, to keep the system fully local.
+Everything runs locally under **Ollama** (LLM + embeddings) with **embedded Qdrant**. Tickets append to `data/tickets.jsonl`, the local manager-review queue (no external notifications, by design).
 
-**On each run, before any answer reaches you:** every model turn is generated against a JSON schema, then validated with Pydantic (bad JSON is re-prompted, with bounded retries); the loop enforces a max-step budget and a repeated-action detector; tool exceptions are caught and returned as observations. The full thought, action, and observation trace is written to a `logs/*.log` file, so every audit is reviewable afterward. The eval harness (below) is a separate offline test, not part of the live request path.
+**Each run, before you see an answer:** every model turn is schema-constrained and Pydantic-validated (bad JSON is retried); the loop caps steps and blocks repeated actions; tool errors come back as observations rather than crashes. The full trace is written to `logs/*.log`. The eval harness (below) is a separate offline test, not the live path.
 
 ---
 
@@ -118,14 +122,14 @@ Note the discipline in Route B: every number ($2.81, 40.25 h) comes from a Pytho
 
 | Choice | What | Why this one |
 |---|---|---|
-| **Runner** | Ollama | One-binary local install; mature native structured outputs and tool-calling. |
-| **LLM** | `qwen2.5:7b-instruct` (dev: `:3b`) | Best small-model instruction-following and tool-calling. Reliability compounds across a multi-step loop, so correctness beats raw speed. Swappable via `OLLAMA_MODEL` with no code change. |
-| **Why not 14B** | n/a | On CPU the limit is memory bandwidth, not capacity; a 14B roughly halves tok/s and makes the loop impractical. |
-| **Vector store** | Qdrant **embedded** | Real Qdrant, zero ops, no Docker. |
-| **Embeddings** | `nomic-embed-text` via Ollama | Whole stack on one runner (no extra wheels); uses nomic's asymmetric query/document prefixes for better retrieval. |
-| **Chunking** | Heading-aware, one chunk per rule | Each chunk is a self-contained rule with `doc`/`section` metadata for citations, never blind fixed-size cuts. |
-| **Agent** | Hand-rolled ReAct + structured JSON | A ~150-line loop is the autonomy logic, in the open. A framework would hide it and bloat context for a small CPU model. |
-| **Context window** | Pinned `num_ctx=8192` | Ollama defaults to 2048 and silently truncates on overflow, corrupting a multi-step loop. |
+| **Runner** | Ollama | One local binary serves both the LLM and the embeddings, and constrains output to a JSON schema natively, which the ReAct loop relies on. |
+| **LLM** | `qwen2.5:7b-instruct` (dev: `:3b`) | Strong instruction-following and native function-calling at the 7B size (tracked on the Berkeley Function-Calling Leaderboard). In a multi-step loop one bad step derails the rest, so per-step reliability matters more than tokens/sec. Swappable via `OLLAMA_MODEL`. |
+| **Why not 14B** | n/a | CPU token generation re-reads every weight per token, so it is bound by memory bandwidth: a 14B moves ~2x the bytes and runs at ~half the speed. Too slow for a 5-6 step loop. |
+| **Vector store** | Qdrant **embedded** | The same Qdrant engine as the server, run in-process from a file path: real ANN search, zero ops, no Docker. |
+| **Embeddings** | `nomic-embed-text` via Ollama | Runs on the same Ollama runner (no extra ML dependencies). It is task-prefixed: queries are embedded as `search_query:` and policy chunks as `search_document:`, which is how it was trained and helps asymmetric RAG (short question vs long rule). |
+| **Chunking** | One chunk per policy rule | Split on headings so each vector is a complete, citable rule carrying `doc`/`section` metadata. Fixed-size cuts would split a rule across chunks and break citations. |
+| **Agent** | Hand-rolled ReAct | ~150 lines of explicit loop. The autonomy logic is what is being evaluated, so it stays visible rather than buried in a framework that also bloats context for a small model. |
+| **Context window** | Pinned `num_ctx=8192` | Ollama defaults to 2048 and, on overflow, silently drops the oldest tokens (the system prompt and early observations) with no error, quietly corrupting the loop. 8192 holds the whole trajectory. |
 
 ---
 
