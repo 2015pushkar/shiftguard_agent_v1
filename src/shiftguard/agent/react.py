@@ -2,9 +2,12 @@
 
 One loop, one prompt, every query category. Each step the model emits a
 thought + an action or a final answer; tool results are fed back as compact
-OBSERVATION lines. Guardrails: a max-step budget, a repeated-action detector,
-and tool errors returned as observations so the agent can recover instead of
-crashing. The logged thought/action/observation trace is the demo deliverable.
+OBSERVATION lines. Guardrails: a max-step budget, a repeated-action detector, a
+payroll-verification check (a ticket may only carry a dollar `payroll_impact`
+that `estimate_payroll_impact` actually produced this run — never one the model
+made up), and tool errors returned as observations so the agent can recover
+instead of crashing. The logged thought/action/observation trace is the demo
+deliverable.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from .prompts import build_system_prompt
 from .schemas import AgentResult, TraceStep, agent_step_format
 
 _MAX_OBS_CHARS = 2000
+_PAYROLL_FIELDS = ("regular_pay", "overtime_pay", "double_time_pay", "gross_pay", "overtime_premium")
 
 
 def _compact(observation: dict) -> str:
@@ -26,6 +30,26 @@ def _compact(observation: dict) -> str:
     if len(text) > _MAX_OBS_CHARS:
         text = text[:_MAX_OBS_CHARS] + " …(truncated)"
     return text
+
+
+def _estimate_figures(observation: dict) -> set[float]:
+    """The dollar values a successful estimate_payroll_impact returned (rounded)."""
+    return {
+        round(float(observation[f]), 2)
+        for f in _PAYROLL_FIELDS
+        if isinstance(observation.get(f), (int, float))
+    }
+
+
+def _claims_dollar(args: dict) -> bool:
+    """True if a ticket asserts a non-zero payroll_impact that must be tool-verified."""
+    impact = args.get("payroll_impact")
+    return isinstance(impact, (int, float)) and round(float(impact), 2) != 0.0
+
+
+def _impact_verified(args: dict, figures: set[float] | None) -> bool:
+    """True only if payroll_impact matches a figure estimate_payroll_impact produced."""
+    return bool(figures) and round(float(args["payroll_impact"]), 2) in figures
 
 
 def run_agent(
@@ -46,6 +70,7 @@ def run_agent(
     ]
     steps: list[TraceStep] = []
     action_counts: dict[tuple[str, str], int] = {}
+    payroll_figures: set[float] | None = None  # dollar values verified by estimate_payroll_impact
 
     log.info("QUERY: %s", query)
     for n in range(1, settings.max_steps + 1):
@@ -84,8 +109,24 @@ def run_agent(
                     "try different arguments, or give a final_answer."
                 ),
             }
+        elif (
+            action.tool == "create_review_ticket"
+            and _claims_dollar(action.args)
+            and not _impact_verified(action.args, payroll_figures)
+        ):
+            observation = {
+                "error": "payroll_not_verified",
+                "detail": (
+                    "payroll_impact must be a figure produced by estimate_payroll_impact in "
+                    "this run, never computed yourself. Call estimate_payroll_impact, then "
+                    "copy one of its exact returned values (e.g. overtime_premium or gross_pay) "
+                    "into payroll_impact, and create the ticket again."
+                ),
+            }
         else:
             observation = call_tool(action.tool, action.args)
+            if action.tool == "estimate_payroll_impact" and "error" not in observation:
+                payroll_figures = _estimate_figures(observation)
 
         obs_text = _compact(observation)
         log.info("STEP %d OBSERVATION: %s", n, obs_text)

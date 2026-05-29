@@ -1,15 +1,16 @@
 # Overtime Policy
 
 ## Overtime Threshold
-Hours worked in excess of 40 in a single workweek are overtime and are paid at
-1.5 times the employee's regular hourly rate. Hours at or below 40 in the
-workweek are paid at the regular rate. This employer uses a weekly overtime
-standard only; there is no separate daily overtime rule.
+The overtime threshold is 40 hours worked in a single workweek. Hours worked in
+excess of this 40-hour overtime threshold are paid at 1.5 times the employee's
+regular hourly rate. Hours at or below the 40-hour threshold are paid at the
+regular rate. This employer uses a weekly overtime standard only; there is no
+separate daily overtime rule.
 
 ## Double Time
 Hours worked in excess of 60 in a single workweek are paid at 2.0 times the
 regular hourly rate. Double-time hours are counted on top of the 40-hour
-overtime threshold, not in addition to it.
+overtime tier, not in addition to it.
 
 ## Overtime Authorization
 All overtime must be authorized by a manager in advance. Overtime that was
