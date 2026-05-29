@@ -37,14 +37,14 @@ flowchart TD
     T2 -. reads .-> JS[/"timecards.json (INPUT)"/]
     T5 -. writes .-> TK[/"tickets.jsonl (OUTPUT, review queue)"/]
 
-    classDef tool fill:#eef6ff,stroke:#5b8def;
-    classDef store fill:#f4f4f4,stroke:#999,stroke-dasharray:3 3;
-    classDef io fill:#fff7e6,stroke:#d98f00;
-    classDef answer fill:#e6f4ea,stroke:#2f9e44,stroke-width:2px;
-    class T1,T2,T3,T4,T5 tool;
-    class QD store;
-    class JS,TK io;
-    class OUT answer;
+    classDef navy fill:#1f3a68,stroke:#13264a,color:#ffffff;
+    classDef navyLite fill:#dbe4f5,stroke:#1f3a68,color:#13264a;
+    classDef gold fill:#ffe066,stroke:#e8a200,color:#3d2c00;
+    classDef goldLite fill:#fff9db,stroke:#e8a200,color:#3d2c00;
+    class A,R navy;
+    class U,OUT navyLite;
+    class T1,T2,T3,T4,T5 gold;
+    class QD,JS,TK goldLite;
 ```
 
 Everything runs locally under **Ollama** (LLM + embeddings) with **embedded Qdrant**. Tickets append to `data/tickets.jsonl`, the local manager-review queue (no external notifications, by design).
@@ -62,6 +62,7 @@ Both questions hit the **same loop, same prompt, same five tools**. Nothing abou
 > *"What is our overtime threshold?"*
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#1f3a68','actorBorder':'#13264a','actorTextColor':'#ffffff','signalColor':'#1f3a68','signalTextColor':'#13264a','noteBkgColor':'#ffe066','noteBorderColor':'#e8a200','noteTextColor':'#3d2c00','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -86,6 +87,7 @@ sequenceDiagram
 > This is the case that needs both a policy lookup and tool execution.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#1f3a68','actorBorder':'#13264a','actorTextColor':'#ffffff','signalColor':'#1f3a68','signalTextColor':'#13264a','noteBkgColor':'#ffe066','noteBorderColor':'#e8a200','noteTextColor':'#3d2c00','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -197,4 +199,59 @@ tests/  test_tools.py, test_chunking.py, test_routing.py
 
 - **Speed:** CPU-only is about 9 tok/s on the 7B, so roughly 2 to 5 minutes for the multi-step audit (the only working inference path on the target hardware).
 - **Small-model variance:** multi-step coherence on a 7B is at the edge. Structured output, strict arg schemas, retries, and the repeated-action and max-step guards are the mitigations, and the eval measures the trajectory directly.
+
+---
+
+## Future scope: productionizing and scaling
+
+Today this is a single local process: a synchronous loop, embedded Qdrant, CPU Ollama, and tickets in a JSONL file. To run it for a real payroll team, the shape would change as follows.
+
+```mermaid
+flowchart LR
+    M["Manager / payroll UI"] -->|submit audit| GW["API gateway · FastAPI"]
+
+    subgraph SYNC["Synchronous API path (returns instantly)"]
+      GW -->|enqueue| Q[["Audit queue"]]
+      GW -->|"poll status / result"| PG[("Postgres · system of record")]
+    end
+
+    subgraph ASYNC["Async worker tier (autoscaled, slow work)"]
+      W["Agent worker · ReAct loop"]
+      NS["Notifier worker"]
+    end
+    Q --> W
+    W <-->|inference| LLM["LLM server · vLLM / TGI · GPU"]
+    W <-->|retrieve| QD[("Qdrant cluster")]
+    W <-->|cache| R[("Redis")]
+    W -->|"write ticket + trace"| PG
+    W -->|ticket event| NQ[["Notification queue"]]
+    NQ --> NS
+    NS -->|"async email, retries"| GM["Gmail API / SES"]
+    NS -.-> SL["Slack / Jira"]
+
+    subgraph INGEST["Offline ingestion (on policy change)"]
+      POL["Policy docs (versioned)"] --> IDX["chunk + embed"]
+    end
+    IDX --> QD
+    HRIS[("HRIS / payroll")] -->|timecards| W
+
+    classDef navy fill:#1f3a68,stroke:#13264a,color:#ffffff;
+    classDef gold fill:#ffe066,stroke:#e8a200,color:#3d2c00;
+    classDef goldLite fill:#fff9db,stroke:#e8a200,color:#3d2c00;
+    class M,GW,W,LLM,NS navy;
+    class Q,NQ gold;
+    class PG,QD,R,GM,SL,POL,IDX,HRIS goldLite;
+```
+
+**Make audits asynchronous.** A real audit takes minutes, so the request must not block. The API accepts the job, puts it on an **audit queue**, and returns a job id; a pool of **stateless agent workers** consumes the queue and writes results back. Workers then scale on queue depth and survive restarts.
+
+**Tickets become events; email is sent asynchronously.** When a worker raises a ticket it writes it to the database and emits a ticket event onto a **notification queue**. A separate notifier worker sends the email (Gmail API or SES) with retries and a dead-letter queue, so a slow or failing mail provider never blocks or loses an audit. The same event can fan out to Slack or a real ticketing system.
+
+**Redis and a database do different jobs (your question).** Use **Postgres as the system of record** for tickets, audit runs, statuses, and the full trace, because it is durable, transactional, and queryable for an audit trail. Use **Redis for the fast, throwaway work**: caching embeddings and retrieval results, idempotency keys so a retry never creates a duplicate ticket, rate limiting, and job status, and Redis can also back the task queue. Rule of thumb: if losing it on a restart is unacceptable it belongs in Postgres, otherwise Redis.
+
+**Scale the model and the index.** Replace CPU Ollama with a GPU **inference server (vLLM or TGI)** that does batching and autoscaling, and move embedded Qdrant to a shared **Qdrant cluster**. A versioned **ingestion pipeline** re-chunks and re-embeds policy docs whenever they change, and timecards come from the **HRIS/payroll system** instead of a static file.
+
+**Turn guardrails into enforced gates.** The anti-hallucination and action-honesty rules are prompt-level today; in production they become deterministic checks that run before any answer or ticket is committed (every cited rule must exist in the retrieved chunks, every number must match a tool output). The offline eval harness becomes a CI regression gate, with online monitoring of routing and citation correctness.
+
+**Operational concerns.** Authentication and tenant isolation, encryption and PII handling for timecards, secrets management, per-step metrics and tracing, and a cost/latency budget per run.
 </content>
