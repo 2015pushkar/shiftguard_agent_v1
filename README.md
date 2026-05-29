@@ -37,10 +37,10 @@ flowchart TD
     T2 -. reads .-> JS[/"timecards.json (INPUT)"/]
     T5 -. writes .-> TK[/"tickets.jsonl (OUTPUT, review queue)"/]
 
-    classDef navy fill:#1f3a68,stroke:#13264a,color:#ffffff;
-    classDef navyLite fill:#dbe4f5,stroke:#1f3a68,color:#13264a;
-    classDef gold fill:#ffe066,stroke:#e8a200,color:#3d2c00;
-    classDef goldLite fill:#fff9db,stroke:#e8a200,color:#3d2c00;
+    classDef navy fill:#14213d,stroke:#0b1526,color:#ffffff;
+    classDef navyLite fill:#e6ebf4,stroke:#14213d,color:#14213d;
+    classDef gold fill:#ffd23f,stroke:#d4a017,color:#14213d;
+    classDef goldLite fill:#fff6d6,stroke:#d4a017,color:#14213d;
     class A,R navy;
     class U,OUT navyLite;
     class T1,T2,T3,T4,T5 gold;
@@ -62,7 +62,7 @@ Both questions hit the **same loop, same prompt, same five tools**. Nothing abou
 > *"What is our overtime threshold?"*
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'actorBkg':'#1f3a68','actorBorder':'#13264a','actorTextColor':'#ffffff','signalColor':'#1f3a68','signalTextColor':'#13264a','noteBkgColor':'#ffe066','noteBorderColor':'#e8a200','noteTextColor':'#3d2c00','sequenceNumberColor':'#ffffff'}}}%%
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#14213d','actorBorder':'#0b1526','actorTextColor':'#ffffff','signalColor':'#14213d','signalTextColor':'#14213d','noteBkgColor':'#ffd23f','noteBorderColor':'#d4a017','noteTextColor':'#14213d','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -87,7 +87,7 @@ sequenceDiagram
 > This is the case that needs both a policy lookup and tool execution.
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'actorBkg':'#1f3a68','actorBorder':'#13264a','actorTextColor':'#ffffff','signalColor':'#1f3a68','signalTextColor':'#13264a','noteBkgColor':'#ffe066','noteBorderColor':'#e8a200','noteTextColor':'#3d2c00','sequenceNumberColor':'#ffffff'}}}%%
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#14213d','actorBorder':'#0b1526','actorTextColor':'#ffffff','signalColor':'#14213d','signalTextColor':'#14213d','noteBkgColor':'#ffd23f','noteBorderColor':'#d4a017','noteTextColor':'#14213d','sequenceNumberColor':'#ffffff'}}}%%
 sequenceDiagram
     autonumber
     actor U as User
@@ -202,56 +202,32 @@ tests/  test_tools.py, test_chunking.py, test_routing.py
 
 ---
 
-## Future scope: productionizing and scaling
+## Future scope: productionizing
 
-Today this is a single local process: a synchronous loop, embedded Qdrant, CPU Ollama, and tickets in a JSONL file. To run it for a real payroll team, the shape would change as follows.
+Today it is one local process (synchronous loop, embedded Qdrant, CPU Ollama, tickets in a file). The main changes to run it for a real payroll team:
 
 ```mermaid
 flowchart LR
-    M["Manager / payroll UI"] -->|submit audit| GW["API gateway · FastAPI"]
+    UI["Manager UI"] --> API["FastAPI API"]
+    API -->|enqueue audit| SQS[["Amazon SQS<br/>audit queue"]]
+    API -. status / result .-> DB[("Postgres<br/>tickets + runs")]
 
-    subgraph SYNC["Synchronous API path (returns instantly)"]
-      GW -->|enqueue| Q[["Audit queue"]]
-      GW -->|"poll status / result"| PG[("Postgres · system of record")]
-    end
+    SQS --> W["Agent worker<br/>ReAct loop (autoscaled)"]
+    W <-->|inference| LLM["LLM server · GPU"]
+    W <-->|retrieve| QD[("Qdrant")]
+    W -->|store ticket| DB
+    W -->|ticket event| NQ[["Amazon SQS<br/>notifications"]]
+    NQ --> MAIL["Email · Amazon SES"]
 
-    subgraph ASYNC["Async worker tier (autoscaled, slow work)"]
-      W["Agent worker · ReAct loop"]
-      NS["Notifier worker"]
-    end
-    Q --> W
-    W <-->|inference| LLM["LLM server · vLLM / TGI · GPU"]
-    W <-->|retrieve| QD[("Qdrant cluster")]
-    W <-->|cache| R[("Redis")]
-    W -->|"write ticket + trace"| PG
-    W -->|ticket event| NQ[["Notification queue"]]
-    NQ --> NS
-    NS -->|"async email, retries"| GM["Gmail API / SES"]
-    NS -.-> SL["Slack / Jira"]
-
-    subgraph INGEST["Offline ingestion (on policy change)"]
-      POL["Policy docs (versioned)"] --> IDX["chunk + embed"]
-    end
-    IDX --> QD
-    HRIS[("HRIS / payroll")] -->|timecards| W
-
-    classDef navy fill:#1f3a68,stroke:#13264a,color:#ffffff;
-    classDef gold fill:#ffe066,stroke:#e8a200,color:#3d2c00;
-    classDef goldLite fill:#fff9db,stroke:#e8a200,color:#3d2c00;
-    class M,GW,W,LLM,NS navy;
-    class Q,NQ gold;
-    class PG,QD,R,GM,SL,POL,IDX,HRIS goldLite;
+    classDef navy fill:#14213d,stroke:#0b1526,color:#ffffff;
+    classDef gold fill:#ffd23f,stroke:#d4a017,color:#14213d;
+    classDef goldLite fill:#fff6d6,stroke:#d4a017,color:#14213d;
+    class UI,API,W,LLM navy;
+    class SQS,NQ gold;
+    class DB,QD,MAIL goldLite;
 ```
 
-**Make audits asynchronous.** A real audit takes minutes, so the request must not block. The API accepts the job, puts it on an **audit queue**, and returns a job id; a pool of **stateless agent workers** consumes the queue and writes results back. Workers then scale on queue depth and survive restarts.
-
-**Tickets become events; email is sent asynchronously.** When a worker raises a ticket it writes it to the database and emits a ticket event onto a **notification queue**. A separate notifier worker sends the email (Gmail API or SES) with retries and a dead-letter queue, so a slow or failing mail provider never blocks or loses an audit. The same event can fan out to Slack or a real ticketing system.
-
-**Redis and a database do different jobs (your question).** Use **Postgres as the system of record** for tickets, audit runs, statuses, and the full trace, because it is durable, transactional, and queryable for an audit trail. Use **Redis for the fast, throwaway work**: caching embeddings and retrieval results, idempotency keys so a retry never creates a duplicate ticket, rate limiting, and job status, and Redis can also back the task queue. Rule of thumb: if losing it on a restart is unacceptable it belongs in Postgres, otherwise Redis.
-
-**Scale the model and the index.** Replace CPU Ollama with a GPU **inference server (vLLM or TGI)** that does batching and autoscaling, and move embedded Qdrant to a shared **Qdrant cluster**. A versioned **ingestion pipeline** re-chunks and re-embeds policy docs whenever they change, and timecards come from the **HRIS/payroll system** instead of a static file.
-
-**Turn guardrails into enforced gates.** The anti-hallucination and action-honesty rules are prompt-level today; in production they become deterministic checks that run before any answer or ticket is committed (every cited rule must exist in the retrieved chunks, every number must match a tool output). The offline eval harness becomes a CI regression gate, with online monitoring of routing and citation correctness.
-
-**Operational concerns.** Authentication and tenant isolation, encryption and PII handling for timecards, secrets management, per-step metrics and tracing, and a cost/latency budget per run.
+- **Async, not blocking.** An audit takes minutes, so the API drops the job on an **SQS queue** and returns immediately; autoscaled **agent workers** process the queue. Statuses and results are read back from **Postgres**, the durable store for tickets and audit runs. (Redis can be added later for caching and idempotency.)
+- **Notifications off a second queue.** A raised ticket emits an event to a **notifications queue**, and a worker sends the email through **Amazon SES** with retries, so a slow mail provider never blocks or loses an audit.
+- **Scale the heavy parts.** Swap CPU Ollama for a **GPU inference server** and the embedded index for a shared **Qdrant** cluster, re-embedding policies only when they change.
 </content>
