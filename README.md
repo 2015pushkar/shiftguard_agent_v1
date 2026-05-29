@@ -49,7 +49,7 @@ flowchart TD
 
 Everything runs locally under **Ollama** (LLM + embeddings) with **embedded Qdrant**. Tickets append to `data/tickets.jsonl`, the local manager-review queue (no external notifications, by design).
 
-**Each run, before you see an answer:** every model turn is schema-constrained and Pydantic-validated (bad JSON is retried); the loop caps steps and blocks repeated actions; tool errors come back as observations rather than crashes. The full trace is written to `logs/*.log`. The eval harness (below) is a separate offline test, not the live path.
+**Each run, before you see an answer:** every model turn is schema-constrained and Pydantic-validated (bad JSON is retried); the loop caps steps and blocks repeated actions; tool errors come back as observations rather than crashes. The full trace is written to `logs/*.log`, and real run traces are committed under [`logs.example/`](logs.example/) (a RAG-only lookup, the full multi-tool audit, and an out-of-scope refusal). The eval harness (below) is a separate offline test, not the live path.
 
 ---
 
@@ -79,7 +79,7 @@ sequenceDiagram
 
 **Answer:** Our overtime threshold is 40 hours per workweek (Monday 12:00 AM through Sunday 11:59 PM). Cited from *Overtime Policy > Overtime Threshold*.
 
-**Path:** `search_policy -> final answer` &nbsp;(1 of 5 tools; no timecards, no math, no ticket)
+**Path:** `search_policy -> final answer` &nbsp;(1 of 5 tools; no timecards, no math, no ticket) &nbsp;·&nbsp; [full trace](logs.example/agent_search_policy.json)
 
 ### Route B: a full audit (document lookup *and* tool execution)
 
@@ -114,7 +114,7 @@ sequenceDiagram
 
 **Answer:** A manager review ticket (TKT-29531b26) was opened for overtime worked without authorization and a missed clock-out punch. Overtime premium: $2.81.
 
-**Path:** `get_timecards -> compute_hours -> search_policy -> estimate_payroll_impact -> create_review_ticket -> final answer` &nbsp;(5 of 5 tools; RAG lookup *and* tool execution)
+**Path:** `get_timecards -> compute_hours -> search_policy -> estimate_payroll_impact -> create_review_ticket -> final answer` &nbsp;(5 of 5 tools; RAG lookup *and* tool execution) &nbsp;·&nbsp; [full trace](logs.example/agent_all_tool_call.json)
 
 Note the discipline in Route B: every number ($2.81, 40.25 h) comes from a Python tool, never the model; every citation is one `search_policy` actually returned; and the ticket is reported as created only because the observation confirmed it.
 

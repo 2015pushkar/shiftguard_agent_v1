@@ -1,0 +1,4 @@
+15:10:41 | INFO    | shiftguard | logging initialized -> C:\Users\Pushk\Downloads\Projects\shiftguard_agent_v1\logs\agent_20260528_151041.log
+15:10:41 | INFO    | shiftguard.agent | QUERY: What's the weather today?
+15:10:54 | INFO    | shiftguard.agent | STEP 1 THOUGHT: The question asks about current weather, which is not related to payroll, timecards, or company policy. I should decline as the tool set does not provide this information.
+15:10:54 | INFO    | shiftguard.agent | FINAL ANSWER: I'm sorry, but my tools are focused on payroll and timecard data, and do not include weather updates.
