@@ -1,0 +1,4 @@
+18:24:01 | INFO    | shiftguard | logging initialized -> C:\Users\Pushk\Downloads\Projects\shiftguard_agent_v1\evals\report\out_of_scope_20260530_182401.log
+18:24:01 | INFO    | shiftguard.agent | QUERY: What's the weather today?
+18:24:11 | INFO    | shiftguard.agent | STEP 1 THOUGHT: The user is asking for current weather, which is not related to payroll, timecards, or policy.
+18:24:11 | INFO    | shiftguard.agent | FINAL ANSWER: I cannot provide weather information. Please consult a weather service for today’s conditions.
