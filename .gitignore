@@ -17,3 +17,6 @@ data/tickets.jsonl
 
 # AI assistant instructions (kept local, not shipped)
 CLAUDE.md
+
+# Local study notes (personal, not published)
+study/

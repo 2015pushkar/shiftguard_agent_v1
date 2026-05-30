@@ -38,8 +38,9 @@ calculated estimates from chip specs — confirm with `ollama run <model>
   Ollama ~0.3GB · Qdrant embedded <0.1GB · Windows baseline ~5–6GB →
   **peak ≈ 12–14GB / 24GB.** Both models load in the one Ollama runtime, and
   embedding only runs hard at *index-build* time, not in the loop.
-- **Speed — MEASURED on this box:** 7B Q4 = **~9.75 tok/s** generation (smoke
-  test confirmed the 8–12 estimate; ~6.7s one-time model load). With Ollama
+- **Speed — MEASURED on this box:** 7B Q4 = **~10 tok/s** generation (two smoke
+  tests: ~9.75 and a re-run at **10.41 tok/s** eval rate / 17.03 tok/s prompt /
+  ~9.4s one-time load — confirms the 8–12 estimate). With Ollama
   prefix-caching across loop steps, **~15–30s/step → ~2–4 min for the
   5-step headline query**, and **~20–40 min for a full eval run**. 3B is ~2–3×
   faster (chosen for dev iteration).
